@@ -1,0 +1,88 @@
+### Linkage prune data first, using script of Ravinet/Meier (https://github.com/speciationgenomics/scripts/blob/master/ldPruning.sh) 
+### Default is filtered for LD in 50 kb windows, shifting by 10 kb with LD threshold
+
+FILE=NAME
+bash ldPruning.sh $FILE.vcf.gz
+
+### Convert vcf file to treemix format, using script of Joana Meier (https://github.com/speciationgenomics/scripts/blob/master/vcf2treemix.sh)
+### Requires plink2treemix.py script to be present in same folder (https://github.com/thomnelson/tools/blob/master/plink2treemix.py) 
+
+FILE=noroot.LDpruned
+bash vcf2treemix.sh $FILE.vcf.gz hawaii.clust
+
+# where hawaii.clust is
+# a1      a1      Maui
+# a6      a6      Maui
+# a3      a3      Maui
+# a4      a4      Kauai
+# a7      a7      Kauai
+# a8      a8      Kauai
+# a9      a9      Sinkauai
+# a10     a10     Kauai
+# a2      a2      Kauai
+# a11     a11     Sinoahu
+# a5      a5      Sinoahu
+
+### use loop to run treemix
+
+FILE=noroot.LDpruned
+
+for i in {1..5}
+do
+ treemix -i $FILE.treemix.frq.gz -m $i -o $FILE.$i -root Kauai -bootstrap -k 500 -noss 
+done
+
+### visualise output using R script provided with treemix (plotting_funcs.R; https://rdrr.io/github/bmansfeld/QTLseqr/src/R/plotting_functions.R)
+
+### Use optM function to estimate the optimal number of migrations edges to add to the tree. See https://cran.r-project.org/web/packages/OptM/readme/README.html
+### The software checks to see if there is variation across iterations for each M. In my case, there was not variation - same likelihood across some runs - 
+### meaning the standard deviation across runs was zero and the ad hoc statistic undefined. 
+### To avoid this issue, use random seed, vary the number of SNPs per window, and subset the data, including globa rearrangements 
+
+### Random sample of main treemix file (80%)
+### I tried 95% but this did nto work
+FILE=noroot.LDpruned
+for i in {1..10}
+do
+ cat $FILE.treemix.frq.txt | awk 'BEGIN {srand()} !/^$/ { if (rand() <= .70) print $0}' > subset.$i.treemix.frq
+done
+### add header back to file
+### header.txt
+#Maui Sinkauai Sinoahu Kauai Erinn
+for i in {1..10}
+do
+ cat header.txt subset.$i.treemix.frq > subset.$i.treemix.frq.out
+done
+rm *.frq
+for i in *.out; do mv -- "$i" "${i%.out}"; done
+gzip *.frq
+
+### run multiple iterations of treemix for optM analysis
+# m = number of migration edges
+# i = number of replicates for each value of m
+# k = number of SNPs per window
+# s = random seed
+FILE=subset
+for m in {1..4}
+do
+for i in {1..10}
+do
+# Generate random seed
+s=$RANDOM
+echo "Random seed = ${s}"
+# Generate random k between 100 and 1000 in 50 SNP increments
+k=$(seq 100 25 1000 | shuf -n 1)
+treemix \
+-i $FILE.${i}.treemix.frq.gz \
+-o $FILE.${i}.${m} \
+-global \
+-m ${m} \
+-k ${k} \
+-noss \
+-seed ${s} 
+done
+done
+
+### archive folder and upload to https://rfitak.shinyapps.io/OptM/ or else use provided R code (* but still gave an error for me)
+cd ..
+tar -zcvf treemix70.tar.gz ./subset
